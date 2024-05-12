@@ -3,3 +3,4 @@ mobile-net/train/*
 mobile-net/food101/*
 mobile-net/history.log
 README.md
+.gitignore
