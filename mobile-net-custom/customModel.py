@@ -182,4 +182,23 @@ def training_scope(**kwargs):
   return lib.training_scope(**kwargs)
 
 
-__all__ = ['training_scope', 'mobilenet_base', 'mobilenet', 'V2_DEF']
+def train_mobilenet(dataset_path, **kwargs):
+    """
+    Train MobileNet model.
+
+    Args:
+        dataset_path: Path to the dataset directory.
+        **kwargs: Additional keyword arguments for training.
+    """
+    # Define your training procedure here using the provided dataset_path and other arguments.
+    # Save the trained model to custom_trained_model.h5
+    custom_trained_model_path = "custom_trained_model.h5"
+    # Your training code here
+    # Example:
+    # model = mobilenet(...)
+    # train_dataset = load_dataset(dataset_path)
+    # model.fit(train_dataset, ...)
+    # model.save(custom_trained_model_path)
+
+
+__all__ = ['training_scope', 'mobilenet_base', 'mobilenet', 'V2_DEF', 'train_mobilenet']

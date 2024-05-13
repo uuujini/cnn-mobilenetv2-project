@@ -2,5 +2,9 @@ mobile-net/test/*
 mobile-net/train/*
 mobile-net/food101/*
 mobile-net/history.log
+
+mobile-net-custom/test/*
+mobile-net-custom/train/*
+
 README.md
 .gitignore
