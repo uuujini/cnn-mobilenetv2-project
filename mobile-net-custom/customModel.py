@@ -16,15 +16,21 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+from keras.applications import MobileNetV2
 
 import copy
 import functools
 
 import tensorflow.compat.v1 as tf
 import tf_slim as slim
+import sys
+import os
 
-from nets.mobilenet import conv_blocks as ops
-from nets.mobilenet import mobilenet as lib
+# 모델 저장소 경로를 추가합니다.
+sys.path.append(os.path.join(os.getcwd(), 'models/research/slim'))
+
+from models.research.slim.nets.mobilenet import conv_blocks as ops
+from models.research.slim.nets.mobilenet import mobilenet as lib
 
 op = lib.op
 
@@ -104,47 +110,47 @@ def mobilenet(input_tensor,
               divisible_by=None,
               activation_fn=None,
               **kwargs):
+    if conv_defs is None:
+        conv_defs = V2_DEF
+    if 'multiplier' in kwargs:
+        raise ValueError('mobilenetv2 doesn\'t support generic '
+                         'multiplier parameter use "depth_multiplier" instead.')
+    if finegrain_classification_mode:
+        conv_defs = copy.deepcopy(conv_defs)
+        if depth_multiplier < 1:
+            conv_defs['spec'][-1].params['num_outputs'] /= depth_multiplier
+    if activation_fn:
+        conv_defs = copy.deepcopy(conv_defs)
+        defaults = conv_defs['defaults']
+        conv_defaults = (
+            defaults[(slim.conv2d, slim.fully_connected, slim.separable_conv2d)])
+        conv_defaults['activation_fn'] = activation_fn
 
-  if conv_defs is None:
-    conv_defs = V2_DEF
-  if 'multiplier' in kwargs:
-    raise ValueError('mobilenetv2 doesn\'t support generic '
-                     'multiplier parameter use "depth_multiplier" instead.')
-  if finegrain_classification_mode:
-    conv_defs = copy.deepcopy(conv_defs)
-    if depth_multiplier < 1:
-      conv_defs['spec'][-1].params['num_outputs'] /= depth_multiplier
-  if activation_fn:
-    conv_defs = copy.deepcopy(conv_defs)
-    defaults = conv_defs['defaults']
-    conv_defaults = (
-        defaults[(slim.conv2d, slim.fully_connected, slim.separable_conv2d)])
-    conv_defaults['activation_fn'] = activation_fn
+    depth_args = {}
+    # NB: do not set depth_args unless they are provided to avoid overriding
+    # whatever default depth_multiplier might have thanks to arg_scope.
+    if min_depth is not None:
+        depth_args['min_depth'] = min_depth
+    if divisible_by is not None:
+        depth_args['divisible_by'] = divisible_by
 
-  depth_args = {}
-  # NB: do not set depth_args unless they are provided to avoid overriding
-  # whatever default depth_multiplier might have thanks to arg_scope.
-  if min_depth is not None:
-    depth_args['min_depth'] = min_depth
-  if divisible_by is not None:
-    depth_args['divisible_by'] = divisible_by
+    with slim.arg_scope((lib.depth_multiplier,), **depth_args):
+        return lib.mobilenet(
+            input_tensor,
+            num_classes=num_classes,
+            conv_defs=conv_defs,
+            scope=scope,
+            multiplier=depth_multiplier,
+            **kwargs)
 
-  with slim.arg_scope((lib.depth_multiplier,), **depth_args):
-    return lib.mobilenet(
-        input_tensor,
-        num_classes=num_classes,
-        conv_defs=conv_defs,
-        scope=scope,
-        multiplier=depth_multiplier,
-        **kwargs)
 
 mobilenet.default_image_size = 224
 
 
 def wrapped_partial(func, *args, **kwargs):
-  partial_func = functools.partial(func, *args, **kwargs)
-  functools.update_wrapper(partial_func, func)
-  return partial_func
+    partial_func = functools.partial(func, *args, **kwargs)
+    functools.update_wrapper(partial_func, func)
+    return partial_func
 
 
 # Wrappers for mobilenet v2 with depth-multipliers. Be noticed that
@@ -159,46 +165,97 @@ mobilenet_v2_035 = wrapped_partial(mobilenet, depth_multiplier=0.35,
 
 @slim.add_arg_scope
 def mobilenet_base(input_tensor, depth_multiplier=1.0, **kwargs):
-  """Creates base of the mobilenet (no pooling and no logits) ."""
-  return mobilenet(input_tensor,
-                   depth_multiplier=depth_multiplier,
-                   base_only=True, **kwargs)
+    """Creates base of the mobilenet (no pooling and no logits) ."""
+    return mobilenet(input_tensor,
+                     depth_multiplier=depth_multiplier,
+                     base_only=True, **kwargs)
 
 
 @slim.add_arg_scope
 def mobilenet_base_group_norm(input_tensor, depth_multiplier=1.0, **kwargs):
-  """Creates base of the mobilenet (no pooling and no logits) ."""
-  kwargs['conv_defs'] = V2_DEF_GROUP_NORM
-  kwargs['conv_defs']['defaults'].update({
-      (slim.group_norm,): {
-          'groups': kwargs.pop('groups', 8)
-      }
-  })
-  return mobilenet(
-      input_tensor, depth_multiplier=depth_multiplier, base_only=True, **kwargs)
+    """Creates base of the mobilenet (no pooling and no logits) ."""
+    kwargs['conv_defs'] = V2_DEF_GROUP_NORM
+    kwargs['conv_defs']['defaults'].update({
+        (slim.group_norm,): {
+            'groups': kwargs.pop('groups', 8)
+        }
+    })
+    return mobilenet(
+        input_tensor, depth_multiplier=depth_multiplier, base_only=True, **kwargs)
 
 
 def training_scope(**kwargs):
-  return lib.training_scope(**kwargs)
+    return lib.training_scope(**kwargs)
 
 
-def train_mobilenet(dataset_path, **kwargs):
+# 제공된 데이터셋을 사용하여 MobileNet 모델을 훈련합니다.
+def train_mobilenet(**kwargs):
     """
     Train MobileNet model.
 
     Args:
-        dataset_path: Path to the dataset directory.
         **kwargs: Additional keyword arguments for training.
     """
-    # Define your training procedure here using the provided dataset_path and other arguments.
-    # Save the trained model to custom_trained_model.h5
-    custom_trained_model_path = "custom_trained_model.h5"
-    # Your training code here
-    # Example:
-    # model = mobilenet(...)
-    # train_dataset = load_dataset(dataset_path)
-    # model.fit(train_dataset, ...)
-    # model.save(custom_trained_model_path)
+    import keras
+    from keras import regularizers
+    from keras.models import Model
+    from keras.layers import Dense, Dropout, GlobalAveragePooling2D
+    from keras.preprocessing.image import ImageDataGenerator
+    from keras.callbacks import ModelCheckpoint, CSVLogger
+    from keras.optimizers import SGD
+
+    n_classes = 101
+    img_width, img_height = 299, 299
+    train_data_dir = 'C:/Users/yujin/cnn-project/mobile-net-custom/train'
+    validation_data_dir = 'C:/Users/yujin/cnn-project/mobile-net-custom/test'
+    nb_train_samples = 75750
+    nb_validation_samples = 25250
+    batch_size = 20
+
+    train_datagen = ImageDataGenerator(
+        rescale=1. / 255,
+        shear_range=0.2,
+        zoom_range=0.2,
+        horizontal_flip=True)
+
+    test_datagen = ImageDataGenerator(rescale=1. / 255)
+
+    train_generator = train_datagen.flow_from_directory(
+        train_data_dir,
+        target_size=(img_height, img_width),
+        batch_size=batch_size,
+        class_mode='categorical')
+
+    validation_generator = test_datagen.flow_from_directory(
+        validation_data_dir,
+        target_size=(img_height, img_width),
+        batch_size=batch_size,
+        class_mode='categorical')
+
+    mbv2 = MobileNetV2(weights='imagenet', include_top=False, input_shape=(299, 299, 3))
+    x = mbv2.output
+    x = GlobalAveragePooling2D()(x)
+    x = Dense(128, activation='relu')(x)
+    x = Dropout(0.2)(x)
+
+    predictions = Dense(101, kernel_regularizer=regularizers.l2(0.005), activation='softmax')(x)
+
+    model = Model(inputs=mbv2.input, outputs=predictions)
+    model.compile(optimizer=SGD(lr=0.0001, momentum=0.9), loss='categorical_crossentropy', metrics=['accuracy'])
+    checkpointer = ModelCheckpoint(filepath='best_model_3class_sept.hdf5', verbose=1, save_best_only=True)
+    csv_logger = CSVLogger('history.log')
+
+    history = model.fit_generator(train_generator,
+                                  steps_per_epoch=nb_train_samples // batch_size,
+                                  validation_data=validation_generator,
+                                  validation_steps=nb_validation_samples // batch_size,
+                                  epochs=1, # EPOCHS 우선 1로 지정
+                                  verbose=1,
+                                  callbacks=[csv_logger, checkpointer])
+
+    model.save('custom_model_trained.h5')
 
 
-__all__ = ['training_scope', 'mobilenet_base', 'mobilenet', 'V2_DEF', 'train_mobilenet']
+train_mobilenet()
+
+
