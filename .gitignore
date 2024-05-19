@@ -5,6 +5,7 @@ mobile-net/history.log
 
 mobile-net-custom/test/*
 mobile-net-custom/train/*
+mobile-net-custom/models/*
 
 README.md
 .gitignore
