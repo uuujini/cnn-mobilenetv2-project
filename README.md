@@ -10,3 +10,4 @@
 ▶ https://github.com/robert-kamunde/Food101Project
 
 ### Used Model: Mobile-netV2
+### Used Library: TensorFlow-Slim
