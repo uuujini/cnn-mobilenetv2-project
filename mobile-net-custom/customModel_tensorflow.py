@@ -29,6 +29,7 @@ from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.callbacks import ModelCheckpoint, CSVLogger
 from tensorflow.keras.optimizers import SGD
+from tensorflow.keras import regularizers
 
 # 모델 저장소 경로를 추가합니다.
 sys.path.append(os.path.join(os.getcwd(), 'models/research/slim'))
