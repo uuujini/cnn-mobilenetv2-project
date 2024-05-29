@@ -1,5 +1,12 @@
+# 모바일넷
 mobile-net/test/*
 mobile-net/train/*
 mobile-net/food101/*
 mobile-net/history.log
+
+mobile-net-custom/test/*
+mobile-net-custom/train/*
+mobile-net-custom/models/*
+
 README.md
+.gitignore
