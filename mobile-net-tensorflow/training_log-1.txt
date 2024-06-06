@@ -1,0 +1,10 @@
+Epoch 1, Average Loss: 15.8977, Validation Accuracy: 0.0117
+Epoch 2, Average Loss: 15.9003, Validation Accuracy: 0.0114
+Epoch 3, Average Loss: 15.8975, Validation Accuracy: 0.0127
+Epoch 4, Average Loss: 15.8878, Validation Accuracy: 0.0119
+Epoch 5, Average Loss: 15.9003, Validation Accuracy: 0.0115
+Epoch 6, Average Loss: 15.9016, Validation Accuracy: 0.0116
+Epoch 7, Average Loss: 15.9050, Validation Accuracy: 0.0121
+Epoch 8, Average Loss: 15.8988, Validation Accuracy: 0.0112
+Epoch 9, Average Loss: 15.9160, Validation Accuracy: 0.0120
+Epoch 10, Average Loss: 15.9071, Validation Accuracy: 0.0122

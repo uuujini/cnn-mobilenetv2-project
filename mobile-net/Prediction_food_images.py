@@ -17,7 +17,7 @@ def create_foodlist(path):
     return list_
 
 #loading the model i trained and finetuned
-my_model = load_model('pre_model_trained.h5', compile = False)
+my_model = load_model('C:/Users/yujin/cnn-project/mobile-net-tensorflow/saved_model_mobilenetv2/saved_model.pb', compile = False)
 food_list = create_foodlist("food101/images")
 
 #function to help in predicting classes of new images loaded from my computer(for now)

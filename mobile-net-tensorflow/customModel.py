@@ -1,0 +1,261 @@
+# Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from keras.applications import MobileNetV2
+
+import copy
+import functools
+
+import tensorflow.compat.v1 as tf
+import tf_slim as slim
+import sys
+import os
+
+# 모델 저장소 경로를 추가합니다.
+sys.path.append(os.path.join(os.getcwd(), 'models/research/slim'))
+
+from models.research.slim.nets.mobilenet import conv_blocks as ops
+from models.research.slim.nets.mobilenet import mobilenet as lib
+
+op = lib.op
+
+expand_input = ops.expand_input_by_factor
+
+# pyformat: disable
+# Architecture: https://arxiv.org/abs/1801.04381
+V2_DEF = dict(
+    defaults={
+        # Note: these parameters of batch norm affect the architecture
+        # that's why they are here and not in training_scope.
+        (slim.batch_norm,): {'center': True, 'scale': True},
+        (slim.conv2d, slim.fully_connected, slim.separable_conv2d): {
+            'normalizer_fn': slim.batch_norm, 'activation_fn': tf.nn.relu6
+        },
+        (ops.expanded_conv,): {
+            'expansion_size': expand_input(6),
+            'split_expansion': 1,
+            'normalizer_fn': slim.batch_norm,
+            'residual': True
+        },
+        (slim.conv2d, slim.separable_conv2d): {'padding': 'SAME'}
+    },
+    spec=[
+        op(slim.conv2d, stride=2, num_outputs=32, kernel_size=[3, 3]),
+        op(ops.expanded_conv,
+           expansion_size=expand_input(1, divisible_by=1),
+           num_outputs=16),
+        op(ops.expanded_conv, stride=2, num_outputs=24),
+        op(ops.expanded_conv, stride=1, num_outputs=24),
+        op(ops.expanded_conv, stride=2, num_outputs=32),
+        op(ops.expanded_conv, stride=1, num_outputs=32),
+        op(ops.expanded_conv, stride=1, num_outputs=32),
+        op(ops.expanded_conv, stride=2, num_outputs=64),
+        op(ops.expanded_conv, stride=1, num_outputs=64),
+        op(ops.expanded_conv, stride=1, num_outputs=64),
+        op(ops.expanded_conv, stride=1, num_outputs=64),
+        op(ops.expanded_conv, stride=1, num_outputs=96),
+        op(ops.expanded_conv, stride=1, num_outputs=96),
+        op(ops.expanded_conv, stride=1, num_outputs=96),
+        op(ops.expanded_conv, stride=2, num_outputs=160),
+        op(ops.expanded_conv, stride=1, num_outputs=160),
+        op(ops.expanded_conv, stride=1, num_outputs=160),
+        op(ops.expanded_conv, stride=1, num_outputs=320),
+        op(slim.conv2d, stride=1, kernel_size=[1, 1], num_outputs=1280)
+    ],
+)
+# pyformat: enable
+
+# Mobilenet v2 Definition with group normalization.
+V2_DEF_GROUP_NORM = copy.deepcopy(V2_DEF)
+V2_DEF_GROUP_NORM['defaults'] = {
+    (slim.conv2d, slim.fully_connected, slim.separable_conv2d): {
+        'normalizer_fn': slim.group_norm,  # pylint: disable=C0330
+        'activation_fn': tf.nn.relu6,  # pylint: disable=C0330
+    },  # pylint: disable=C0330
+    (ops.expanded_conv,): {
+        'expansion_size': ops.expand_input_by_factor(6),
+        'split_expansion': 1,
+        'normalizer_fn': slim.group_norm,
+        'residual': True
+    },
+    (slim.conv2d, slim.separable_conv2d): {
+        'padding': 'SAME'
+    }
+}
+
+
+@slim.add_arg_scope
+def mobilenet(input_tensor,
+              num_classes=1001,
+              depth_multiplier=1.0,
+              scope='MobilenetV2',
+              conv_defs=None,
+              finegrain_classification_mode=False,
+              min_depth=None,
+              divisible_by=None,
+              activation_fn=None,
+              **kwargs):
+    if conv_defs is None:
+        conv_defs = V2_DEF
+    if 'multiplier' in kwargs:
+        raise ValueError('mobilenetv2 doesn\'t support generic '
+                         'multiplier parameter use "depth_multiplier" instead.')
+    if finegrain_classification_mode:
+        conv_defs = copy.deepcopy(conv_defs)
+        if depth_multiplier < 1:
+            conv_defs['spec'][-1].params['num_outputs'] /= depth_multiplier
+    if activation_fn:
+        conv_defs = copy.deepcopy(conv_defs)
+        defaults = conv_defs['defaults']
+        conv_defaults = (
+            defaults[(slim.conv2d, slim.fully_connected, slim.separable_conv2d)])
+        conv_defaults['activation_fn'] = activation_fn
+
+    depth_args = {}
+    # NB: do not set depth_args unless they are provided to avoid overriding
+    # whatever default depth_multiplier might have thanks to arg_scope.
+    if min_depth is not None:
+        depth_args['min_depth'] = min_depth
+    if divisible_by is not None:
+        depth_args['divisible_by'] = divisible_by
+
+    with slim.arg_scope((lib.depth_multiplier,), **depth_args):
+        return lib.mobilenet(
+            input_tensor,
+            num_classes=num_classes,
+            conv_defs=conv_defs,
+            scope=scope,
+            multiplier=depth_multiplier,
+            **kwargs)
+
+
+mobilenet.default_image_size = 224
+
+
+def wrapped_partial(func, *args, **kwargs):
+    partial_func = functools.partial(func, *args, **kwargs)
+    functools.update_wrapper(partial_func, func)
+    return partial_func
+
+
+# Wrappers for mobilenet v2 with depth-multipliers. Be noticed that
+# 'finegrain_classification_mode' is set to True, which means the embedding
+# layer will not be shrinked when given a depth-multiplier < 1.0.
+mobilenet_v2_140 = wrapped_partial(mobilenet, depth_multiplier=1.4)
+mobilenet_v2_050 = wrapped_partial(mobilenet, depth_multiplier=0.50,
+                                   finegrain_classification_mode=True)
+mobilenet_v2_035 = wrapped_partial(mobilenet, depth_multiplier=0.35,
+                                   finegrain_classification_mode=True)
+
+
+@slim.add_arg_scope
+def mobilenet_base(input_tensor, depth_multiplier=1.0, **kwargs):
+    """Creates base of the mobilenet (no pooling and no logits) ."""
+    return mobilenet(input_tensor,
+                     depth_multiplier=depth_multiplier,
+                     base_only=True, **kwargs)
+
+
+@slim.add_arg_scope
+def mobilenet_base_group_norm(input_tensor, depth_multiplier=1.0, **kwargs):
+    """Creates base of the mobilenet (no pooling and no logits) ."""
+    kwargs['conv_defs'] = V2_DEF_GROUP_NORM
+    kwargs['conv_defs']['defaults'].update({
+        (slim.group_norm,): {
+            'groups': kwargs.pop('groups', 8)
+        }
+    })
+    return mobilenet(
+        input_tensor, depth_multiplier=depth_multiplier, base_only=True, **kwargs)
+
+
+def training_scope(**kwargs):
+    return lib.training_scope(**kwargs)
+
+
+# 제공된 데이터셋을 사용하여 MobileNet 모델을 훈련합니다.
+def train_mobilenet(**kwargs):
+    """
+    Train MobileNet model.
+
+    Args:
+        **kwargs: Additional keyword arguments for training.
+    """
+    import keras
+    from keras import regularizers
+    from keras.models import Model
+    from keras.layers import Dense, Dropout, GlobalAveragePooling2D
+    from keras.preprocessing.image import ImageDataGenerator
+    from keras.callbacks import ModelCheckpoint, CSVLogger
+    from keras.optimizers import SGD
+
+    n_classes = 101
+    img_width, img_height = 299, 299
+    train_data_dir = '/mobile-net-tensorflow/train'
+    validation_data_dir = '/mobile-net-tensorflow/test'
+    nb_train_samples = 75750
+    nb_validation_samples = 25250
+    batch_size = 20
+
+    train_datagen = ImageDataGenerator(
+        rescale=1. / 255,
+        shear_range=0.2,
+        zoom_range=0.2,
+        horizontal_flip=True)
+
+    test_datagen = ImageDataGenerator(rescale=1. / 255)
+
+    train_generator = train_datagen.flow_from_directory(
+        train_data_dir,
+        target_size=(img_height, img_width),
+        batch_size=batch_size,
+        class_mode='categorical')
+
+    validation_generator = test_datagen.flow_from_directory(
+        validation_data_dir,
+        target_size=(img_height, img_width),
+        batch_size=batch_size,
+        class_mode='categorical')
+
+    mbv2 = MobileNetV2(weights='imagenet', include_top=False, input_shape=(299, 299, 3))
+    x = mbv2.output
+    x = GlobalAveragePooling2D()(x)
+    x = Dense(128, activation='relu')(x)
+    x = Dropout(0.2)(x)
+
+    predictions = Dense(101, kernel_regularizer=regularizers.l2(0.005), activation='softmax')(x)
+
+    model = Model(inputs=mbv2.input, outputs=predictions)
+    model.compile(optimizer=SGD(lr=0.0001, momentum=0.9), loss='categorical_crossentropy', metrics=['accuracy'])
+    checkpointer = ModelCheckpoint(filepath='best_model_3class_sept.hdf5', verbose=1, save_best_only=True)
+    csv_logger = CSVLogger('history.log')
+
+    history = model.fit_generator(train_generator,
+                                  steps_per_epoch=nb_train_samples // batch_size,
+                                  validation_data=validation_generator,
+                                  validation_steps=nb_validation_samples // batch_size,
+                                  epochs=1, # EPOCHS 우선 1로 지정
+                                  verbose=1,
+                                  callbacks=[csv_logger, checkpointer])
+
+    model.save('custom_model_trained.h5')
+
+
+train_mobilenet()
+
+
