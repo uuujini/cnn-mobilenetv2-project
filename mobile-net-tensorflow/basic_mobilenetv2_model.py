@@ -1,3 +1,5 @@
+# Final tensorflow mobilenetv2 custom model의 기반이 되는 model
+
 import os
 import numpy as np
 import tensorflow as tf
@@ -53,7 +55,7 @@ def build_and_train_model():
     loss_fn = tf.losses.SparseCategoricalCrossentropy()
 
     # Log file
-    log_file_path = 'training_log.txt'
+    log_file_path = 'basic_training_log.txt'
     with open(log_file_path, 'w') as log_file:
         log_file.write("Epoch,Step,Loss,Accuracy,Validation Accuracy\n")
 
