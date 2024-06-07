@@ -10,20 +10,59 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 print("TensorFlow version:", tf.__version__)
 print("Available GPU Devices:", tf.config.list_physical_devices('GPU'))
 
-# 커스텀 배치 정규화 레이어 정의
-class CustomBatchNorm(tf.keras.layers.Layer):
+class CustomBatchNorm(tf.Module):
     def __init__(self, epsilon=0.001):
-        super(CustomBatchNorm, self).__init__()
+        super().__init__()
         self.epsilon = epsilon
+        self.scale = tf.Variable(tf.ones([]), trainable=True)
+        self.offset = tf.Variable(tf.zeros([]), trainable=True)
 
-    def build(self, input_shape):
-        self.scale = self.add_weight("scale", shape=input_shape[-1:], initializer="ones", trainable=True)
-        self.offset = self.add_weight("offset", shape=input_shape[-1:], initializer="zeros", trainable=True)
-
-    def call(self, inputs):
+    def __call__(self, inputs):
         mean, variance = tf.nn.moments(inputs, axes=[0, 1, 2], keepdims=False)
         return tf.nn.batch_normalization(inputs, mean, variance, self.offset, self.scale, self.epsilon)
 
+class ConvBlock(tf.Module):
+    def __init__(self, filters, kernel_size, strides=1, use_dropout=False):
+        super().__init__()
+        self.strides = strides
+        self.use_dropout = use_dropout
+        self.conv_weights = tf.Variable(tf.initializers.GlorotUniform()(shape=[kernel_size, kernel_size, 3, filters]))
+        self.bn = CustomBatchNorm()
+        if self.use_dropout:
+            self.dropout = tf.Variable(tf.constant(0.2), trainable=False)
+
+    def __call__(self, inputs):
+        conv = tf.nn.conv2d(inputs, self.conv_weights, strides=[1, self.strides, self.strides, 1], padding='SAME')
+        conv = tf.nn.relu(conv)
+        conv = self.bn(conv)
+        if self.use_dropout:
+            conv = tf.nn.dropout(conv, rate=self.dropout)
+        return conv
+
+class DepthwiseConvBlock(tf.Module):
+    def __init__(self, input_channels, depth_multiplier, pointwise_filters, strides=1, use_dropout=False):
+        super().__init__()
+        self.strides = strides
+        self.use_dropout = use_dropout
+        self.depthwise_filter = tf.Variable(tf.initializers.GlorotUniform()(shape=[3, 3, input_channels, depth_multiplier]))
+        self.pointwise_filter = tf.Variable(tf.initializers.GlorotUniform()(shape=[1, 1, input_channels * depth_multiplier, pointwise_filters]))
+        self.bn1 = CustomBatchNorm()
+        self.bn2 = CustomBatchNorm()
+        if self.use_dropout:
+            self.dropout = tf.Variable(tf.constant(0.2), trainable=False)
+
+    def __call__(self, inputs):
+        depthwise_conv = tf.nn.depthwise_conv2d(inputs, self.depthwise_filter, strides=[1, self.strides, self.strides, 1], padding='SAME')
+        depthwise_conv = tf.nn.relu(depthwise_conv)
+        depthwise_conv = self.bn1(depthwise_conv)
+
+        pointwise_conv = tf.nn.conv2d(depthwise_conv, self.pointwise_filter, strides=[1, 1, 1, 1], padding='SAME')
+        pointwise_conv = tf.nn.relu(pointwise_conv)
+        pointwise_conv = self.bn2(pointwise_conv)
+
+        if self.use_dropout:
+            pointwise_conv = tf.nn.dropout(pointwise_conv, rate=self.dropout)
+        return pointwise_conv
 
 def preprocess_image(file_path):
     img = tf.io.read_file(file_path)
@@ -31,7 +70,6 @@ def preprocess_image(file_path):
     img = tf.image.resize(img, [299, 299])
     img = img / 255.0  # Normalize to [0, 1]
     return img
-
 
 def load_data(data_dir):
     categories = os.listdir(data_dir)
@@ -50,68 +88,32 @@ def load_data(data_dir):
     dataset = dataset.shuffle(buffer_size=1024).batch(32).prefetch(tf.data.experimental.AUTOTUNE)
     return dataset
 
-# 합성곱 블록 정의
-def conv_block(inputs, filters, kernel_size, strides=1, use_dropout=False):
-    weight_init = tf.initializers.GlorotUniform()
-    conv_weights = tf.Variable(weight_init(shape=[kernel_size, kernel_size, inputs.shape[-1], filters]))
-    conv = tf.nn.conv2d(inputs, conv_weights, strides=[1, strides, strides, 1], padding='SAME')
-    conv = tf.nn.relu(conv)
-    conv = CustomBatchNorm()(conv)
-    if use_dropout:
-        conv = tf.nn.dropout(conv, rate=0.2)
-    return conv
+class CustomModel(tf.Module):
+    def __init__(self, input_shape, num_classes):
+        super().__init__()
+        self.conv_block1 = ConvBlock(32, 3, strides=2, use_dropout=True)
+        self.depthwise_conv_block1 = DepthwiseConvBlock(32, 1, 64, strides=1, use_dropout=True)
+        self.depthwise_conv_block2 = DepthwiseConvBlock(64, 1, 128, strides=2, use_dropout=True)
+        self.depthwise_conv_block3 = DepthwiseConvBlock(128, 1, 256, strides=2, use_dropout=True)
+        self.depthwise_conv_block4 = DepthwiseConvBlock(256, 1, 512, strides=2, use_dropout=True)
+        self.dense_weights1 = tf.Variable(tf.initializers.GlorotUniform()(shape=[512, 128]))
+        self.dense_bias1 = tf.Variable(tf.zeros([128]))
+        self.dense_weights2 = tf.Variable(tf.initializers.GlorotUniform()(shape=[128, num_classes]))
+        self.dense_bias2 = tf.Variable(tf.zeros([num_classes]))
 
-# 깊이별 분리 합성곱 블록 정의
-def depthwise_conv_block(inputs, depth_multiplier, pointwise_filters, strides=1, use_dropout=False):
-    depthwise_init = tf.initializers.GlorotUniform()
-    pointwise_init = tf.initializers.GlorotUniform()
-
-    depthwise_filter = tf.Variable(depthwise_init(shape=[3, 3, inputs.shape[-1], depth_multiplier]))
-    pointwise_filter = tf.Variable(pointwise_init(shape=[1, 1, inputs.shape[-1] * depth_multiplier, pointwise_filters]))
-
-    depthwise_conv = tf.nn.depthwise_conv2d(inputs, depthwise_filter, strides=[1, strides, strides, 1], padding='SAME')
-    depthwise_conv = tf.nn.relu(depthwise_conv)
-    depthwise_conv = CustomBatchNorm()(depthwise_conv)
-
-    pointwise_conv = tf.nn.conv2d(depthwise_conv, pointwise_filter, strides=[1, 1, 1, 1], padding='SAME')
-    pointwise_conv = tf.nn.relu(pointwise_conv)
-    pointwise_conv = CustomBatchNorm()(pointwise_conv)
-
-    if use_dropout:
-        pointwise_conv = tf.nn.dropout(pointwise_conv, rate=0.2)
-    return pointwise_conv
-
-
-def build_custom_model(input_shape, num_classes):
-    inputs = tf.keras.Input(shape=input_shape)
-
-    # Initial convolution block
-    x = conv_block(inputs, 32, kernel_size=3, strides=2, use_dropout=True)
-
-    # Depthwise separable convolution blocks
-    x = depthwise_conv_block(x, depth_multiplier=1, pointwise_filters=64, strides=1, use_dropout=True)
-    x = depthwise_conv_block(x, depth_multiplier=1, pointwise_filters=128, strides=2, use_dropout=True)
-    x = depthwise_conv_block(x, depth_multiplier=1, pointwise_filters=256, strides=2, use_dropout=True)
-    x = depthwise_conv_block(x, depth_multiplier=1, pointwise_filters=512, strides=2, use_dropout=True)
-
-    # Global average pooling
-    x = tf.reduce_mean(x, axis=[1, 2])
-
-    # Dense layers
-    dense_weights = tf.Variable(tf.initializers.GlorotUniform()(shape=[512, 128]))
-    dense_bias = tf.Variable(tf.zeros([128]))
-    x = tf.nn.relu(tf.matmul(x, dense_weights) + dense_bias)
-
-    dense_weights = tf.Variable(tf.initializers.GlorotUniform()(shape=[128, num_classes]))
-    dense_bias = tf.Variable(tf.zeros([num_classes]))
-    outputs = tf.nn.softmax(tf.matmul(x, dense_weights) + dense_bias)
-
-    model = tf.keras.Model(inputs=inputs, outputs=outputs)
-    return model
-
+    def __call__(self, inputs, training=False):
+        x = self.conv_block1(inputs)
+        x = self.depthwise_conv_block1(x)
+        x = self.depthwise_conv_block2(x)
+        x = self.depthwise_conv_block3(x)
+        x = self.depthwise_conv_block4(x)
+        x = tf.reduce_mean(x, axis=[1, 2])
+        x = tf.nn.relu(tf.matmul(x, self.dense_weights1) + self.dense_bias1)
+        outputs = tf.nn.softmax(tf.matmul(x, self.dense_weights2) + self.dense_bias2)
+        return outputs
 
 def build_and_train_model():
-    model = build_custom_model((299, 299, 3), 101)
+    model = CustomModel((299, 299, 3), 101)
     train_data = load_data('C:/Users/yujin/cnn-project/mobile-net/train')
     validation_data = load_data('C:/Users/yujin/cnn-project/mobile-net/test')
 
@@ -127,7 +129,7 @@ def build_and_train_model():
     completed_steps = 0
 
     # Training and validation
-    for epoch in range(1):  # Increase number of epochs for more training
+    for epoch in range(10):  # Increase number of epochs for more training
         print(f"Starting epoch {epoch + 1}")
         epoch_loss = []
         step_count = 0
@@ -139,8 +141,8 @@ def build_and_train_model():
             with tf.GradientTape() as tape:
                 logits = model(x_batch_train, training=True)
                 loss = loss_fn(y_batch_train, logits)
-            grads = tape.gradient(loss, model.trainable_weights)
-            optimizer.apply_gradients(zip(grads, model.trainable_weights))
+            grads = tape.gradient(loss, model.trainable_variables)
+            optimizer.apply_gradients(zip(grads, model.trainable_variables))
             epoch_loss.append(loss.numpy())
             step_count += 1
             completed_steps += 1
@@ -161,8 +163,7 @@ def build_and_train_model():
                     log_file.write(f"{epoch + 1},{step},{loss.numpy():.4f},{batch_accuracy:.4f},{remaining_time_str}\n")
 
         avg_loss = np.mean(epoch_loss)
-        print(f"Epoch {epoch + 1}, Average Loss: {avg_loss:.4f}")
-        #print(f"Epoch {epoch + 1}/{30}, Average Loss: {avg_loss:.4f}")
+        print(f"Epoch {epoch + 1}/{10}, Average Loss: {avg_loss:.4f}")
 
         # Validation
         val_accuracy_metric = tf.metrics.SparseCategoricalAccuracy()
@@ -180,7 +181,6 @@ def build_and_train_model():
     # Save the model using the TensorFlow SavedModel format
     tf.saved_model.save(model, 'trained_model_mobilenetv2_custom')
     print("Training completed and model saved.")
-
 
 if __name__ == '__main__':
     build_and_train_model()
