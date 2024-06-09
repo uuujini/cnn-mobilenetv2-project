@@ -1,0 +1,1 @@
+Epoch,Step,Loss,Accuracy,Validation Loss,Validation Accuracy

@@ -112,7 +112,7 @@ def build_and_train_model():
     completed_steps = 0
 
     # Training and validation
-    for epoch in range(30):  # Increase number of epochs for more training
+    for epoch in range(10):  # Increase number of epochs for more training
         print(f"Starting epoch {epoch + 1}")
         epoch_loss = []
         step_count = 0
@@ -146,7 +146,7 @@ def build_and_train_model():
                     log_file.write(f"{epoch + 1},{step},{loss.numpy():.4f},{batch_accuracy:.4f},{remaining_time_str}\n")
 
         avg_loss = np.mean(epoch_loss)
-        print(f"Epoch {epoch + 1}/{30}, Average Loss: {avg_loss:.4f}")
+        print(f"Epoch {epoch + 1}/{10}, Average Loss: {avg_loss:.4f}")
 
         # Validation
         val_accuracy_metric = tf.metrics.SparseCategoricalAccuracy()
