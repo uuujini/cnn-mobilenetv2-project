@@ -197,5 +197,6 @@ def build_and_train_model():
 
     print("Training completed and model saved.")
 
+
 if __name__ == '__main__':
     build_and_train_model()
