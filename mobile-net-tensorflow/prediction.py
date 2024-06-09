@@ -19,7 +19,7 @@ def create_foodlist(path):
 
 
 # Load the SavedModel format model
-model_path = 'C:/Users/yujin/cnn-project/mobile-net-tensorflow/saved_model_mobilenetv2'
+model_path = 'C:/Users/yujin/cnn-project/mobile-net-tensorflow/trained_model_mobilenetv2_custom'
 my_model = tf.saved_model.load(model_path)
 
 # Display the signatures to find the correct output tensor name
@@ -54,8 +54,8 @@ def predict_class(model, images, show=True):
 
 # Add the images you want to predict into a list (these are in the WD)
 images = []
-images.append('sc.jpg')
-images.append('vb1.jpg')
+images.append('salad.jpg')
+images.append('601.jpg')
 images.append('vp.jpg')
 images.append('es.jpg')
 

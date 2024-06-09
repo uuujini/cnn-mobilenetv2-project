@@ -2,9 +2,7 @@ import os
 import numpy as np
 import tensorflow as tf
 from tensorflow import data as tfdata
-from tensorflow import image as tfimage
-from tensorflow import io as tfio
-import time
+import matplotlib.pyplot as plt
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 print("TensorFlow version:", tf.__version__)
@@ -124,7 +122,26 @@ class CustomModel(tf.Module):
     def serving_default(self, inputs):
         return self.__call__(inputs, training=False)
 
-# Helper classes for convolutional blocks (ConvBlock and DepthwiseConvBlock) are assumed to be defined elsewhere.
+def plot_accuracy(log_file_path):
+    epochs, train_accuracies, val_accuracies = [], [], []
+    with open(log_file_path, 'r') as file:
+        next(file)  # 헤더 스킵
+        for line in file:
+            data = line.strip().split(',')
+            epoch, train_accuracy, val_accuracy = int(data[0]), float(data[3]), float(data[5])
+            epochs.append(epoch)
+            train_accuracies.append(train_accuracy)
+            val_accuracies.append(val_accuracy)
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(epochs, train_accuracies, label='Training Accuracy')
+    plt.plot(epochs, val_accuracies, label='Validation Accuracy')
+    plt.title('Training and Validation Accuracy per Epoch')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
 def build_and_train_model():
     model = CustomModel((299, 299, 3), 101)
@@ -134,68 +151,61 @@ def build_and_train_model():
     optimizer = tf.optimizers.Adam(learning_rate=0.0001)
     loss_fn = tf.losses.SparseCategoricalCrossentropy()
 
-    # Log file
     log_file_path = 'custom_training_log.txt'
     with open(log_file_path, 'w') as log_file:
-        log_file.write("Epoch,Step,Loss,Accuracy,Validation Accuracy\n")
+        log_file.write("Epoch,Step,Loss,Accuracy,Val_Loss,Val_Accuracy\n")
 
-    total_steps = sum(1 for _ in train_data) * 30  # Total steps for all epochs
+    total_steps = sum(1 for _ in train_data) * 30
     completed_steps = 0
 
-    # Training and validation
-    for epoch in range(10):  # Increase number of epochs for more training
+    for epoch in range(1):  # Increase number of epochs for more training
         print(f"Starting epoch {epoch + 1}")
         epoch_loss = []
+        epoch_accuracy = []
         step_count = 0
-        epoch_start_time = time.time()
 
         for step, (x_batch_train, y_batch_train) in enumerate(train_data):
-            step_start_time = time.time()
-
             with tf.GradientTape() as tape:
                 logits = model(x_batch_train, training=True)
                 loss = loss_fn(y_batch_train, logits)
             grads = tape.gradient(loss, model.trainable_variables)
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             epoch_loss.append(loss.numpy())
-            step_count += 1
-            completed_steps += 1
 
             # Calculate accuracy for the batch
             predictions = tf.argmax(logits, axis=1, output_type=tf.int32)
             batch_accuracy = tf.reduce_mean(tf.cast(tf.equal(predictions, y_batch_train), tf.float32)).numpy()
-
-            step_time = time.time() - step_start_time
-            time_per_step = step_time
-            remaining_time = (total_steps - completed_steps) * time_per_step
-            remaining_time_str = time.strftime('%H:%M:%S', time.gmtime(remaining_time))
+            epoch_accuracy.append(batch_accuracy)
+            step_count += 1
+            completed_steps += 1
 
             if step % 10 == 0:
-                print(
-                    f"Epoch {epoch + 1}, Step {step}, Loss: {loss.numpy():.4f}, Accuracy: {batch_accuracy:.4f}, Remaining Time: {remaining_time_str}")
+                print(f"Epoch {epoch + 1}, Step {step}, Loss: {loss.numpy():.4f}, Accuracy: {batch_accuracy:.4f}")
                 with open(log_file_path, 'a') as log_file:
-                    log_file.write(f"{epoch + 1},{step},{loss.numpy():.4f},{batch_accuracy:.4f},{remaining_time_str}\n")
+                    log_file.write(f"{epoch + 1},{step},{loss.numpy():.4f},{batch_accuracy:.4f},,\n")
 
         avg_loss = np.mean(epoch_loss)
-        print(f"Epoch {epoch + 1}/{10}, Average Loss: {avg_loss:.4f}")
+        avg_accuracy = np.mean(epoch_accuracy)
+        print(f"Epoch {epoch + 1}, Average Loss: {avg_loss:.4f}, Average Accuracy: {avg_accuracy:.4f}")
 
         # Validation
+        val_loss = 0
         val_accuracy_metric = tf.metrics.SparseCategoricalAccuracy()
         for x_batch_val, y_batch_val in validation_data:
             val_logits = model(x_batch_val, training=False)
+            val_loss_batch = loss_fn(y_batch_val, val_logits)
+            val_loss += val_loss_batch.numpy()
             val_accuracy_metric.update_state(y_batch_val, val_logits)
-        val_accuracy = val_accuracy_metric.result()
-        val_accuracy_metric.reset_states()
-        print(f"Epoch {epoch + 1}, Validation Accuracy: {val_accuracy:.4f}")
+        val_accuracy = val_accuracy_metric.result().numpy()
+        val_loss /= len(validation_data)
+        print(f"Epoch {epoch + 1}, Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}")
 
         with open(log_file_path, 'a') as log_file:
-            log_file.write(
-                f"Epoch {epoch + 1}, Average Loss: {avg_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}\n")
+            log_file.write(f"{epoch + 1},,,,{val_loss:.4f},{val_accuracy:.4f}\n")
 
-    # Save the model using the TensorFlow SavedModel format with signature
     tf.saved_model.save(model, 'trained_model_mobilenetv2_custom', signatures={'serving_default': model.serving_default})
-
     print("Training completed and model saved.")
 
 if __name__ == '__main__':
     build_and_train_model()
+    plot_accuracy('custom_training_log.txt')
