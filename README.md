@@ -11,6 +11,6 @@ Labeled food images in 101 categories from apple pies to waffles
 
 ### Env.
 
-▶ Used Model: Mobile-netV2
++ Used Model: Mobile-netV2
 
-▶ Used API: TensorFlow
++ Used API: TensorFlow
