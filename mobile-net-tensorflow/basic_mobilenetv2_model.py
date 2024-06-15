@@ -60,7 +60,7 @@ def build_and_train_model():
         log_file.write("Epoch,Step,Loss,Accuracy,Validation Accuracy\n")
 
     # Training and validation
-    for epoch in range(1):
+    for epoch in range(10):
         epoch_loss = []
         step_count = 0
         for step, (x_batch_train, y_batch_train) in enumerate(train_data):
