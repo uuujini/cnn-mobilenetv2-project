@@ -1,7 +1,7 @@
 # Food-CNN-PROJECT
 
 ### Dataset: Food Images (Food-101)
-Labeled food images in 101 categories from apple pies to waffles
++ Labeled food images in 101 categories from apple pies to waffles
 
 ▶ https://www.kaggle.com/datasets/kmader/food41?resource=download
 
