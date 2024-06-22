@@ -1,4 +1,4 @@
-# Food-CNN-PROJECT
+# Food Classification-CNN-PROJECT
 
 ### Dataset: Food Images (Food-101)
 + Labeled food images in 101 categories from apple pies to waffles
